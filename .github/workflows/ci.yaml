@@ -1,17 +1,101 @@
 name: Comprehensive DevSecOps Pipeline (SAST, SCA, DAST)
 
-permissions:
-  # This permission is required when uploading sarifs to any repository at GitHub
-  security-events: write
-
 on:
   pull_request:
     branches: [ main, master ]
   push:
-    branches: "*"
+    branches: [ main, master ]
+
+permissions:
+  # This permission is required when uploading sarifs to any repository at GitHub
+  security-events: write
+  # These permissions are only required when uploading sarifs to private and internal repositories at GitHub
+  contents: read
+  actions: read
 
 jobs:
-  sast:
+  build_sign_and_publish:
+    env:
+      # Define the image name and tag dynamically
+      IMAGE_TAG: latest
+      IMAGE_NAME: sebssekk/devsec-deleteme
+    name: build-sign-and-publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # =================================================================
+      # 1. Login to DockerHub
+      # =================================================================
+      # We use a stored secret for DockerHub authentication
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      # =================================================================
+      # 2. Build and Push the Image
+      # =================================================================
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        id: docker_build
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+
+      # =================================================================
+      # 3. Sign the Image with Cosign (Artifact Provenance)
+      # =================================================================
+      # Cosign uses the OIDC token granted via 'id-token: write' permission
+      # to sign the image without needing a long-lived secret key.
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+        
+      - name: Sign the Published Image
+        run: |
+          # Use cosign sign command. The signature is stored in the registry alongside the image.
+          cosign sign -y --key env://COSIGN_KEY ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+        env:
+          COSIGN_KEY: ${{secrets.COSIGN_KEY}}
+          COSIGN_PASSWORD: ${{secrets.COSIGN_PASSWORD}}
+          
+      # =================================================================
+      # 4. Optional: Generate and Upload SBOM (Supply Chain Integrity)
+      # =================================================================
+      # Use Syft to generate a Software Bill of Materials (SBOM) for the image
+      - name: Generate and Upload SBOM (CycloneDX)
+        uses: anchore/sbom-action@v0.17.0
+        with:
+          image: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          format: cyclonedx-json
+          output-file: ${{ runner.temp }}/sbom.json
+          
+      - name: Upload SBOM as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: out-sbom-cyclonedx
+          path: ${{ runner.temp }}/sbom.json
+  secret_example:
+    name: secret-example
+    runs-on: ubuntu-latest
+    steps:
+    - shell: bash
+      env:
+        SUPER_SECRET: ${{ secrets.A_SECRET }}
+      run: |
+        echo "✅ GOOD WAY (never printed) -->"
+        echo $SUPER_SECRET > super-secret.txt
+        echo "⛔ BAD WAY (Fixed by SECRET MASKING) -->"
+        echo $SUPER_SECRET | tee super-secret2.txt
+        
+  # ===============================================
+  # JOB 1: SAST (Static Analysis - Code Quality)
+  # ===============================================
+  sast_job:
     name: semgrep-SAST
     runs-on: ubuntu-latest
     container:
@@ -27,20 +111,14 @@ jobs:
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: semgrep.sarif
-        if: always()   
-#  secret-leak:
-  secret_example:
-    name: secret-example
-    runs-on: ubuntu-latest
-    steps:
-    - shell: bash
-      env:
-        SUPER_SECRET: ${{ secrets.API_KEY }}
-      run: |
-        echo "✅ GOOD WAY (never printed) -->"
-        echo $SUPER_SECRET > super-secret.txt
-        echo "⛔ BAD WAY (Fixed by SECRET MASKING) -->"
-        echo $SUPER_SECRET | tee super-secret2.txt
+        if: always()    
+
+    # Skip any PR created by dependabot to avoid permission issues:
+    if: (github.actor != 'dependabot[bot]')
+
+  # ===============================================
+  # JOB 2: SCA (Software Composition Analysis - Dependencies)
+  # ===============================================
   sca_job:
     name: trivy-SCA
     runs-on: ubuntu-latest
@@ -53,7 +131,7 @@ jobs:
       - name: Set up Python Environment and Install Dependencies
         uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.12'
       
       - name: Install Application Dependencies
         run: pip install -r requirements.txt
@@ -76,6 +154,10 @@ jobs:
         with:
           sarif_file: trivy-sca.sarif
         if: always() 
+          
+  # ===============================================
+  # JOB 3: DAST (Dynamic Analysis - Running App)
+  # ===============================================
   dast_job:
     name: owaspzap-DAST
     runs-on: ubuntu-latest
@@ -125,5 +207,4 @@ jobs:
         with:
           name: zap-html-report
           path: report_html.html
-        if: always()
-          
+        if: always() 
