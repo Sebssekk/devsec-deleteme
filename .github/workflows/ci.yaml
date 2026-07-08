@@ -76,4 +76,54 @@ jobs:
         with:
           sarif_file: trivy-sca.sarif
         if: always() 
+  dast_job:
+    name: owaspzap-DAST
+    runs-on: ubuntu-latest
+    #needs: sca_job # This job must wait for SCA to complete successfully
+    
+    # Define a default variable for the target URL for DAST
+    env:
+      DAST_TARGET_URL: http://localhost:5000/user_data
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Setup Python and Install dependencies are repeated for the DAST runner
+      - name: Set up Python Environment and Install Dependencies
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      
+      - name: Install Application Dependencies
+        run: pip install -r requirements.txt
+        working-directory: . # Assumes requirements.txt is in the root
+
+      # Step 4.1: Start the Flask application in the background
+      - name: Start Flask Application
+        run: |
+          echo "Starting application on port 5000..."
+          python main.py & 
+          # Give the application time to start up before ZAP hits it
+          sleep 15 
+        working-directory: .
+
+      # Step 4.2: Run OWASP ZAP Baseline DAST Scan
+      - name: Run ZAP DAST Scan
+        uses: zaproxy/action-baseline@v0.11.0 
+        id: zap_scan
+        with:
+          target: ${{ env.DAST_TARGET_URL }}
+          # CRITICAL GATING: Fail the GitHub Action if ZAP finds any alerts
+          fail_action: true 
+          # Custom rules file to define which alerts (severity/type) should fail the build
+          #rules_file_name: '.zap/ci_policy_rules.yaml' 
+          
+      # Step 4.3: Upload DAST HTML Report Artifact (Audit)
+      - name: Upload DAST HTML Report Artifact (Audit)
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-html-report
+          path: report_html.html
+        if: always()
           
