@@ -41,3 +41,39 @@ jobs:
         echo $SUPER_SECRET > super-secret.txt
         echo "⛔ BAD WAY (Fixed by SECRET MASKING) -->"
         echo $SUPER_SECRET | tee super-secret2.txt
+  sca_job:
+    name: trivy-SCA
+    runs-on: ubuntu-latest
+    #needs: sast_job # This job must wait for SAST to complete successfully
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        
+      # Setup Python and Install dependencies are repeated because SCA runs on a fresh runner
+      - name: Set up Python Environment and Install Dependencies
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      
+      - name: Install Application Dependencies
+        run: pip install -r requirements.txt
+        working-directory: . # Assumes requirements.txt is in the root
+
+      - name: Run Trivy SCA Scan (Dependency Check)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          input: '.' # Scan the entire filesystem (where requirements.txt was processed)
+          # Policy: Fail the build if Critical or High severity vulnerabilities are found
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+          # Output SARIF for GitHub Security Dashboard integration
+          format: 'sarif'
+          output: 'trivy-sca.sarif'
+
+      - name: Upload SARIF file for GitHub Advanced Security Dashboard
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-sca.sarif
+        if: always() 
+          
