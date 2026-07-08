@@ -1,0 +1,13 @@
+repos:
+  - repo: https://github.com/returntocorp/semgrep
+    rev: v1.144.0 # Use a specific version tag
+    hooks:
+      - id: semgrep
+        name: Lightweight SAST Scan
+        files: \.(py|js|ts|go)$ # Define file extensions to scan
+        args: [
+          '--config', 
+          'p/flask' ,
+          '--config', 
+          'p/owasp-top-ten' ,
+        ]
