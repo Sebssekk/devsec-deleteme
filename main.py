@@ -6,7 +6,7 @@ import sqlite3
 app = Flask(__name__)
 DATABASE = 'database.db'
 
-api_key = "sk-live-7768689097698657"
+api_key = ""
 
 try:
     db = sqlite3.connect(DATABASE)
