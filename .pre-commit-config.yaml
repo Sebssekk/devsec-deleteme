@@ -12,3 +12,9 @@ repos:
         #  '--config', 
         #  'p/owasp-top-ten' ,
         ]
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0 # Use a specific version tag
+    hooks:
+      - id: gitleaks
+        # Only check the files being committed
+        name: Check for Hardcoded Secrets
